@@ -1,0 +1,17 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Uploads / outputs (user data, git এ রাখা উচিত না)
+backend/uploads/*
+backend/outputs/*
+!backend/uploads/.gitkeep
+!backend/outputs/.gitkeep
+
+# Env files
+.env
+
+# Node (frontend পরে আসবে)
+node_modules/
+.next/

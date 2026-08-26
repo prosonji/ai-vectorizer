@@ -1,0 +1,35 @@
+[
+  {
+    "image_id": "38f03d1a-27f6-4f73-a948-41d57cc0c6c1",
+    "mode": "bw",
+    "shapes_found": 11,
+    "colors_used": null,
+    "width": 1376,
+    "height": 768,
+    "created_at": "2026-08-05T05:19:28.639592+00:00",
+    "original_url": "/uploads/38f03d1a-27f6-4f73-a948-41d57cc0c6c1.jpeg",
+    "svg_url": "/download/38f03d1a-27f6-4f73-a948-41d57cc0c6c1"
+  },
+  {
+    "image_id": "335002e0-7c57-4700-893a-45339346f7db",
+    "mode": "bw",
+    "shapes_found": 82,
+    "colors_used": null,
+    "width": 1376,
+    "height": 768,
+    "created_at": "2026-08-11T10:12:28.450425+00:00",
+    "original_url": "/uploads/335002e0-7c57-4700-893a-45339346f7db.jpeg",
+    "svg_url": "/download/335002e0-7c57-4700-893a-45339346f7db"
+  },
+  {
+    "image_id": "8151e9b8-7320-420a-b6e3-617fcddae049",
+    "mode": "color",
+    "shapes_found": 162,
+    "colors_used": 6,
+    "width": 1376,
+    "height": 768,
+    "created_at": "2026-08-11T10:12:42.030533+00:00",
+    "original_url": "/uploads/8151e9b8-7320-420a-b6e3-617fcddae049.jpeg",
+    "svg_url": "/download/8151e9b8-7320-420a-b6e3-617fcddae049"
+  }
+]

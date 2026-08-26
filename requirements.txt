@@ -1,0 +1,17 @@
+# ============================================
+# Step 1: শুধু basic server চালানোর জন্য দরকারি package
+# পরের ধাপগুলোতে (AI pipeline, database, auth, payment)
+# আরও package এখানে যোগ হবে।
+# ============================================
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# Step 2: ছবি/ফাইল আপলোড হ্যান্ডেল করার জন্য এটা দরকার
+python-multipart==0.0.12
+
+# Step 3: AI Pipeline - ছবি প্রসেসিং ও SVG বানানোর জন্য
+# (তোমার Python ভার্সন নতুন বলে version pin না দিয়ে সর্বশেষ compatible ভার্সন নিচ্ছি)
+opencv-python-headless>=4.10.0
+numpy>=1.26.0
+svgwrite>=1.4.3

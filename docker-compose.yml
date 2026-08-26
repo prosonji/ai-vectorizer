@@ -1,0 +1,46 @@
+# ============================================
+# docker-compose.yml (Step 13)
+#
+# এই একটা ফাইল দিয়ে backend আর frontend - দুইটা container একসাথে,
+# এক কমান্ডে চালু করা যায়: `docker compose up`
+#
+# volumes অংশটা গুরুত্বপূর্ণ - এটা ছাড়া container বন্ধ/রিস্টার্ট
+# হলে সব আপলোড করা ছবি, ইউজার ডাটা মুছে যাবে (container নিজেই
+# "temporary")। volume ব্যবহার করলে সেই ডাটা container এর বাইরে,
+# স্থায়ীভাবে থেকে যায়।
+# ============================================
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_outputs:/app/outputs
+      - backend_database:/app/database
+    environment:
+      # ⚠️ আসল ব্যবহারের সময় এটা একটা লম্বা, র‍্যান্ডম, গোপন মান
+      # দিয়ে বদলে দিও - নাহলে যে কেউ ইউজারের লগইন টোকেন জাল করতে পারবে
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-please-change-in-production}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # লোকালি টেস্ট করার সময় backend একই নেটওয়ার্কে "backend" নামে
+        # পাওয়া যায় (Docker নিজেই এটা resolve করে) - কিন্তু ব্রাউজার
+        # থেকে সরাসরি অ্যাক্সেসের জন্য পাবলিক ঠিকানা লাগবে (deploy এর
+        # সময় .env ফাইলে NEXT_PUBLIC_BACKEND_URL সেট করে দিও)
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_uploads:
+  backend_outputs:
+  backend_database:
