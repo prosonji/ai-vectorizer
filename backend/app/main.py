@@ -1,12 +1,16 @@
 """
 AI Vectorizer - Backend Entry Point
-Step 1: শুধু একটা basic FastAPI server, যেটা চালু হয় কিনা টেস্ট করার জন্য।
-Step 9: History ফিচার + uploads ফোল্ডার সরাসরি অ্যাক্সেসযোগ্য করা (থাম্বনেইলের জন্য)।
-Step 10: Login/Register - ডাটাবেজ টেবিল তৈরি + auth endpoint যোগ করা।
-Step 12: Security - Rate limiting (একজন ইউজার/IP খুব ঘনঘন request পাঠাতে না পারে)।
+Step 14: Admin Panel router + is_admin কলামের জন্য ছোট migration।
+
+⚠️ গুরুত্বপূর্ণ নোট: SQLAlchemy এর Base.metadata.create_all() শুধু
+"নতুন" টেবিল বানায় - যদি "users" টেবিল আগে থেকেই থাকে (যেমন তোমার
+লাইভ Render ডিপ্লয়মেন্টে), সেটাতে নতুন কলাম (is_admin) স্বয়ংক্রিয়ভাবে
+যোগ হয় না। তাই নিচে একটা ছোট, হাতে-লেখা migration যোগ করা হলো যেটা
+চেক করে is_admin কলাম আছে কিনা, না থাকলে ALTER TABLE দিয়ে যোগ করে দেয়।
 """
 
 import os
+import sqlite3
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,40 +20,52 @@ from slowapi.errors import RateLimitExceeded
 
 from app.rate_limiter import limiter
 
-from app.database.db import Base, engine
-from app.models.user import User  # noqa: F401 - table তৈরির জন্য import করা জরুরি
+from app.database.db import Base, engine, DATABASE_DIR
+from app.models.user import User  # noqa: F401
 
 from app.api.upload import router as upload_router
 from app.api.vectorize import router as vectorize_router
 from app.api.history import router as history_router
 from app.api.auth import router as auth_router
 from app.api.export import router as export_router
+from app.api.admin import router as admin_router
 
-# Step 10: ডাটাবেজে এখনো টেবিল না থাকলে তৈরি করে দেওয়া (users টেবিল)।
-# এটা সার্ভার চালু হওয়ার সময় একবার চলে - যদি টেবিল আগে থেকেই থাকে,
-# কিছু বদলাবে না (নিরাপদ, বারবার চালালেও সমস্যা নাই)।
+
+def run_sqlite_migrations():
+    """
+    Step 14: is_admin কলাম আগে থেকে থাকা "users" টেবিলে না থাকলে যোগ করা।
+    এটা নিরাপদ - যদি কলাম আগে থেকেই থাকে, কিছু করবে না।
+    """
+    db_path = os.path.join(DATABASE_DIR, "app.db")
+    if not os.path.exists(db_path):
+        return  # এখনো ডাটাবেজ ফাইলই তৈরি হয়নি, নতুন করে বানানো হবে - migration লাগবে না
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    if columns and "is_admin" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
+        conn.commit()
+
+    conn.close()
+
+
+# টেবিল তৈরি (নতুন হলে) + migration (পুরনো টেবিল থাকলে)
 Base.metadata.create_all(bind=engine)
+run_sqlite_migrations()
 
-# FastAPI app তৈরি
 app = FastAPI(
     title="AI Vectorizer API",
     description="PNG/JPG/WEBP -> SVG/EPS/PDF/DXF converter backend",
-    version="0.12.0",
+    version="0.14.0",
 )
 
-# ============================================================
-# Step 12: Rate Limiting সেটাপ
-# ============================================================
-# slowapi লাইব্রেরি দিয়ে প্রতিটা IP address থেকে কতবার request
-# আসছে সেটা ট্র্যাক করা হয়। কোনো IP অতিরিক্ত দ্রুত request পাঠালে
-# (যেমন কেউ script দিয়ে বারবার আপলোড করার চেষ্টা করলে) তাকে সাময়িক
-# সময়ের জন্য ব্লক করে "429 Too Many Requests" জবাব দেওয়া হয়।
-# এটা সার্ভারকে অতিরিক্ত লোড/অপব্যবহার থেকে রক্ষা করে।
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS - পরে Next.js frontend থেকে এই backend কে কল করতে হবে,
-# তাই এখনই সব origin থেকে request allow করে রাখছি (development এর জন্য)।
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,45 +74,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Step 2: Upload router যোগ করা হলো - এখন /upload endpoint কাজ করবে
-app.include_router(upload_router, tags=["Upload"])
-
-# Step 3: Vectorize router যোগ করা হলো - এখন /vectorize আর /download endpoint কাজ করবে
-app.include_router(vectorize_router, tags=["Vectorize"])
-
-# Step 9: History router - এখন /history (GET/DELETE) endpoint কাজ করবে
-app.include_router(history_router, tags=["History"])
-
-# Step 10: Auth router - এখন /register, /login, /me endpoint কাজ করবে
-app.include_router(auth_router, tags=["Auth"])
-
-# Step 11: Export router - এখন /export/pdf/{id} আর /export/eps/{id} কাজ করবে
-app.include_router(export_router, tags=["Export"])
-
-# Step 9: uploads/ ফোল্ডারকে সরাসরি ব্রাউজার থেকে অ্যাক্সেসযোগ্য করা হলো
-# (যেমন http://127.0.0.1:8000/uploads/xxxx.jpeg) - History তে আসল ছবির
-# থাম্বনেইল দেখানোর জন্য এটা দরকার
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOADS_DIR = os.path.join(BACKEND_DIR, "..", "uploads")
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+UPLOAD_DIR = os.path.join(BACKEND_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/")
 def read_root():
-    """
-    Root endpoint - শুধু চেক করার জন্য যে server চালু আছে কিনা।
-    """
-    return {
-        "status": "ok",
-        "message": "AI Vectorizer backend is running",
-    }
+    return {"status": "ok", "message": "AI Vectorizer backend is running"}
 
 
 @app.get("/health")
 def health_check():
-    """
-    Health check endpoint - deployment / monitoring এর জন্য দরকার হবে।
-    """
     return {"status": "healthy"}
+
+
+app.include_router(upload_router, tags=["Upload"])
+app.include_router(vectorize_router, tags=["Vectorize"])
+app.include_router(history_router, tags=["History"])
+app.include_router(auth_router, tags=["Auth"])
+app.include_router(export_router, tags=["Export"])
+app.include_router(admin_router, tags=["Admin"])
