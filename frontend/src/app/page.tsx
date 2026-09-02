@@ -379,31 +379,8 @@ export default function Home() {
 
       {/* ---- আপলোড বক্স (নতুন ডিজাইন) ---- */}
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-        {/* মোড বাছাই - এখন নীল pill স্টাইলে */}
-        <div className="flex gap-2 mb-5 justify-center">
-          <button
-            type="button"
-            onClick={() => setMode("bw")}
-            className={`px-6 py-2 rounded-full text-sm font-semibold transition-colors ${
-              mode === "bw"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100"
-            }`}
-          >
-            কালো-সাদা
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("color")}
-            className={`px-6 py-2 rounded-full text-sm font-semibold transition-colors ${
-              mode === "color"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100"
-            }`}
-          >
-            রঙিন
-          </button>
-        </div>
+        {/* মোড টগল বাটন সরিয়ে ফেলা হলো - ইউজারকে এটা দেখানো হচ্ছে না,
+            ভিতরে ভিতরে ডিফল্ট "bw" মোডেই কাজ করবে */}
 
         {/* ড্র্যাগ-ড্রপ + ক্লিক + পেস্ট বক্স */}
         <label
