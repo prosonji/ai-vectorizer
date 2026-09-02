@@ -1,14 +1,10 @@
 "use client";
 
 /**
- * AI Vectorizer - Homepage (পুনর্গঠিত, সব ফিচার সহ সম্পূর্ণ ভার্সন)
- *
- * এই পেজে যা যা আছে:
- * 1. Login/Register বক্স (উপরে ডানে)
- * 2. Upload + কালো-সাদা/রঙিন মোড টগল
- * 3. Before/After প্রিভিউ
- * 4. SVG/PDF/EPS/DXF ডাউনলোড
- * 5. History সেকশন (আগের সব কাজের তালিকা, থাম্বনেইল সহ)
+ * AI Vectorizer - Homepage
+ * Design আপডেট: আপলোড বক্স এখন রেফারেন্স ছবির স্টাইলে - dashed নীল বর্ডার,
+ * ফাইল-টাইপ আইকন, বড় নীল pill-শেপ বাটন, ড্র্যাগ-ড্রপ + পেস্ট (Ctrl+V) সাপোর্ট।
+ * মোড টগল বাটনও (কালো-সাদা/রঙিন) এখন নীল pill স্টাইলে।
  */
 
 import { useEffect, useState } from "react";
@@ -43,7 +39,6 @@ type AuthUser = {
 type AuthView = "none" | "login" | "register";
 
 export default function Home() {
-  // ---- Upload/Vectorize state ----
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [imageId, setImageId] = useState<string | null>(null);
@@ -53,12 +48,11 @@ export default function Home() {
   const [shapesFound, setShapesFound] = useState<number | null>(null);
   const [colorsUsed, setColorsUsed] = useState<number | null>(null);
   const [mode, setMode] = useState<VectorizeMode>("bw");
+  const [isDragging, setIsDragging] = useState<boolean>(false);
 
-  // ---- History state ----
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
 
-  // ---- Auth state ----
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authView, setAuthView] = useState<AuthView>("none");
@@ -68,27 +62,47 @@ export default function Home() {
   const [authError, setAuthError] = useState<string>("");
   const [authSubmitting, setAuthSubmitting] = useState<boolean>(false);
 
-  // ---- পেজ লোড হওয়ার সময়: history আনো, আর টোকেন থাকলে ইউজার আনো ----
   useEffect(() => {
     fetchHistory();
 
     const savedToken = localStorage.getItem("ai_vectorizer_token");
-    if (!savedToken) return;
+    if (savedToken) {
+      fetch(`${BACKEND_URL}/me`, {
+        headers: { Authorization: `Bearer ${savedToken}` },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("session expired");
+          return res.json();
+        })
+        .then((user) => {
+          setAuthToken(savedToken);
+          setAuthUser(user);
+        })
+        .catch(() => {
+          localStorage.removeItem("ai_vectorizer_token");
+        });
+    }
 
-    fetch(`${BACKEND_URL}/me`, {
-      headers: { Authorization: `Bearer ${savedToken}` },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("session expired");
-        return res.json();
-      })
-      .then((user) => {
-        setAuthToken(savedToken);
-        setAuthUser(user);
-      })
-      .catch(() => {
-        localStorage.removeItem("ai_vectorizer_token");
-      });
+    // ---- Ctrl+V পেস্ট সাপোর্ট ----
+    // ক্লিপবোর্ডে কোনো ছবি থাকলে, পুরো পেজের যেকোনো জায়গায় Ctrl+V
+    // চাপলেই সেটা বাছাই করা ফাইল হিসেবে বসে যাবে।
+    function handlePaste(event: ClipboardEvent) {
+      const items = event.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith("image/")) {
+          const file = items[i].getAsFile();
+          if (file) {
+            applySelectedFile(file);
+          }
+          break;
+        }
+      }
+    }
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
   }, []);
 
   function fetchHistory() {
@@ -105,14 +119,15 @@ export default function Home() {
       await fetch(`${BACKEND_URL}/history`, { method: "DELETE" });
       setHistory([]);
     } catch {
-      // চুপচাপ ব্যর্থ হলেও সমস্যা নাই, ইউজারকে আটকাবে না
+      // চুপচাপ ব্যর্থ হলেও সমস্যা নাই
     }
   }
 
-  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  /**
+   * একটা ফাইল বাছাই হওয়ার পর (click, drag-drop, বা paste - যেভাবেই হোক)
+   * সব জায়গায় এই একই ফাংশন কল হয়, যাতে কোড দুইবার লেখা না লাগে।
+   */
+  function applySelectedFile(file: File) {
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     setImageId(null);
@@ -121,6 +136,29 @@ export default function Home() {
     setErrorMessage("");
     setShapesFound(null);
     setColorsUsed(null);
+  }
+
+  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) applySelectedFile(file);
+  }
+
+  // ---- ড্র্যাগ-ড্রপ হ্যান্ডলার ----
+  function handleDragOver(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) applySelectedFile(file);
   }
 
   async function handleUploadAndVectorize() {
@@ -219,7 +257,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center px-4 py-12">
-      {/* ---- Auth বক্স (উপরে ডানে) ---- */}
+      {/* ---- Auth বক্স ---- */}
       <div className="w-full max-w-xl flex justify-end mb-4">
         {authToken && authUser ? (
           <div className="flex items-center gap-3 text-sm">
@@ -339,17 +377,17 @@ export default function Home() {
         </p>
       </div>
 
-      {/* ---- আপলোড বক্স ---- */}
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-        {/* মোড বাছাই */}
-        <div className="flex gap-2 mb-4">
+      {/* ---- আপলোড বক্স (নতুন ডিজাইন) ---- */}
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+        {/* মোড বাছাই - এখন নীল pill স্টাইলে */}
+        <div className="flex gap-2 mb-5 justify-center">
           <button
             type="button"
             onClick={() => setMode("bw")}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-6 py-2 rounded-full text-sm font-semibold transition-colors ${
               mode === "bw"
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100"
             }`}
           >
             কালো-সাদা
@@ -357,40 +395,86 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setMode("color")}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-6 py-2 rounded-full text-sm font-semibold transition-colors ${
               mode === "color"
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100"
             }`}
           >
             রঙিন
           </button>
         </div>
 
-        <label className="block border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors">
+        {/* ড্র্যাগ-ড্রপ + ক্লিক + পেস্ট বক্স */}
+        <label
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`relative flex items-center justify-center gap-6 border-2 border-dashed rounded-2xl px-6 py-10 text-center cursor-pointer transition-colors ${
+            isDragging
+              ? "border-blue-500 bg-blue-50"
+              : "border-blue-300 bg-blue-50/40 hover:bg-blue-50"
+          }`}
+        >
           <input
             type="file"
             accept=".png,.jpg,.jpeg,.webp"
             onChange={handleFileChange}
             className="hidden"
           />
-          <span className="text-gray-600">
-            {selectedFile
-              ? selectedFile.name
-              : "এখানে ক্লিক করে একটা ছবি বাছাই করো"}
-          </span>
+
+          {/* সাজানো ফাইল-টাইপ কার্ড (শুধু ডিজাইনের জন্য, decorative) */}
+          <div className="hidden sm:flex relative w-24 h-20 shrink-0">
+            <div className="absolute left-0 top-2 w-14 h-16 bg-white border-2 border-blue-300 rounded-lg rotate-[-8deg] flex items-end justify-center pb-1 shadow-sm">
+              <span className="text-[9px] font-bold text-blue-500">.png</span>
+            </div>
+            <div className="absolute left-5 top-1 w-14 h-16 bg-white border-2 border-blue-400 rounded-lg rotate-[-2deg] flex items-end justify-center pb-1 shadow-sm">
+              <span className="text-[9px] font-bold text-blue-500">.jpg</span>
+            </div>
+            <div className="absolute left-10 top-0 w-14 h-16 bg-white border-2 border-blue-500 rounded-lg rotate-[6deg] flex items-end justify-center pb-1 shadow-sm">
+              <span className="text-[9px] font-bold text-blue-600">.webp</span>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-blue-600 font-extrabold italic text-lg sm:text-xl">
+              {selectedFile
+                ? selectedFile.name
+                : "এখানে ছবি টেনে আনো (ড্র্যাগ করে)"}
+            </p>
+            {!selectedFile && (
+              <p className="text-gray-400 text-sm mt-1">
+                অথবা ক্লিক করে বাছাই করো
+              </p>
+            )}
+          </div>
         </label>
 
-        <button
-          onClick={handleUploadAndVectorize}
-          disabled={!selectedFile || stage === "uploading" || stage === "vectorizing"}
-          className="w-full mt-4 bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-        >
-          {stage === "uploading" && "আপলোড হচ্ছে..."}
-          {stage === "vectorizing" && "ভেক্টরাইজ হচ্ছে..."}
-          {(stage === "idle" || stage === "uploaded" || stage === "done" || stage === "error") &&
-            "Upload & Vectorize"}
-        </button>
+        {/* বড়, গোলাকার (pill) আপলোড বাটন */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6">
+          <button
+            onClick={handleUploadAndVectorize}
+            disabled={!selectedFile || stage === "uploading" || stage === "vectorizing"}
+            className="flex items-center gap-2 bg-blue-600 text-white font-bold py-3.5 px-8 rounded-full hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-sm"
+          >
+            <span>↑</span>
+            {stage === "uploading" && "আপলোড হচ্ছে..."}
+            {stage === "vectorizing" && "ভেক্টরাইজ হচ্ছে..."}
+            {(stage === "idle" || stage === "uploaded" || stage === "done" || stage === "error") &&
+              "ছবি বাছাই করে ভেক্টরাইজ করো"}
+          </button>
+
+          <span className="text-gray-400 text-sm flex items-center gap-2">
+            পেস্ট করো:
+            <kbd className="border border-blue-300 text-blue-600 rounded-lg px-2 py-1 text-xs font-bold">
+              Ctrl
+            </kbd>
+            +
+            <kbd className="border border-blue-300 text-blue-600 rounded-lg px-2 py-1 text-xs font-bold">
+              V
+            </kbd>
+          </span>
+        </div>
 
         {stage === "error" && (
           <p className="mt-4 text-red-600 text-sm text-center">{errorMessage}</p>
