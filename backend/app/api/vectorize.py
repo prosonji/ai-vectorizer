@@ -1,13 +1,19 @@
 """
 Vectorize API
 Step 3: আপলোড হওয়া ছবিকে SVG-তে রূপান্তর করার endpoint।
-Step 7: এখন mode প্যারামিটার দিয়ে "bw" (কালো-সাদা) বা "color" (রঙিন) - দুইভাবেই ভেক্টরাইজ করা যায়।
+Step 7: mode প্যারামিটার দিয়ে "bw" (কালো-সাদা) বা "color" (রঙিন) - দুইভাবেই ভেক্টরাইজ করা যায়।
+Step 15: নতুন optimize_for প্যারামিটার - vectorizer.ai এর মতো
+    "Optimize for" প্রিসেট (general/editing/cutting/custom)।
+    - "general", "editing", "cutting" দিলে প্রিসেট নিজেই mode আর
+      curve-simplify এর পরিমাণ ঠিক করে দেয় (mode/epsilon_ratio প্যারামিটার
+      উপেক্ষা করা হয়)।
+    - "custom" দিলে ইউজারের দেওয়া mode হুবহু ব্যবহার হয়।
 
 Flow:
     1. ইউজার আগে /upload দিয়ে ছবি পাঠিয়েছে, একটা image_id পেয়েছে
-    2. এখন /vectorize/{image_id}?mode=bw অথবা ?mode=color দিয়ে কল করবে
+    2. এখন /vectorize/{image_id}?optimize_for=general&mode=bw দিয়ে কল করবে
     3. আমরা uploads/ ফোল্ডারে সেই image_id এর ফাইল খুঁজে বের করি
-    4. app/ai/vectorizer.py এর পাইপলাইন চালিয়ে SVG বানাই (mode অনুযায়ী)
+    4. app/ai/vectorizer.py এর পাইপলাইন চালিয়ে SVG বানাই (optimize_for/mode অনুযায়ী)
     5. outputs/ ফোল্ডারে সেভ করি
     6. ইউজারকে জানাই SVG রেডি, এবং /download/{image_id} দিয়ে নামানো যাবে
 """
@@ -60,7 +66,7 @@ def vectorize(
     image_id: str,
     mode: Literal["bw", "color"] = Query(
         default="bw",
-        description="'bw' = কালো-সাদা মোড, 'color' = রঙিন মোড",
+        description="'bw' = কালো-সাদা মোড, 'color' = রঙিন মোড। optimize_for='custom' না হলে এটা উপেক্ষা করা হয়।",
     ),
     num_colors: int = Query(
         default=8,
@@ -68,12 +74,25 @@ def vectorize(
         le=32,
         description="Color মোডে কতগুলো মূল রঙে ভাগ করা হবে (২-৩২)",
     ),
+    optimize_for: Literal["general", "editing", "cutting", "custom"] = Query(
+        default="general",
+        description=(
+            "vectorizer.ai এর মতো 'Optimize for' প্রিসেট - "
+            "'general' (সাধারণ ব্যবহার), 'editing' (সহজে সম্পাদনার জন্য কম anchor point), "
+            "'cutting' (কাটিং/এনগ্রেভিং এর জন্য পরিষ্কার লাইন), "
+            "'custom' (mode প্যারামিটার অনুযায়ী নিজের মতো)"
+        ),
+    ),
     current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """
     আপলোড হওয়া ছবিকে SVG তে রূপান্তর করে।
-    mode='bw' দিলে কালো-সাদা, mode='color' দিলে রঙিন ভেক্টরাইজ হবে।
+
+    Step 15 - optimize_for:
+        - 'general'/'editing'/'cutting' দিলে প্রিসেট নিজেই mode ঠিক করে
+          (এখন সবগুলো bw মোড ব্যবহার করে, শুধু curve simplify এর পরিমাণ আলাদা)
+        - 'custom' দিলে ইউজারের দেওয়া mode='bw'/'color' হুবহু মানা হয়
 
     Step 12 - Credit সিস্টেম:
         - লগইন করা ইউজার হলে - তার credit ০ বা তার কম হলে আটকে দেওয়া হয়,
@@ -94,7 +113,13 @@ def vectorize(
     output_svg_path = os.path.join(OUTPUT_DIR, f"{image_id}.svg")
 
     try:
-        result = vectorize_image(input_path, output_svg_path, mode=mode, num_colors=num_colors)
+        result = vectorize_image(
+            input_path,
+            output_svg_path,
+            mode=mode,
+            num_colors=num_colors,
+            optimize_for=optimize_for,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -110,13 +135,12 @@ def vectorize(
         remaining_credits = current_user.credits
 
     # ---- Step 9: History তে একটা রেকর্ড যোগ করা ----
-    # original_filename: uploads/ ফোল্ডারে সেভ করা ফাইলের নাম (extension সহ),
-    # এটা দিয়েই আমরা /uploads/... URL বানিয়ে থাম্বনেইল দেখাতে পারব
     original_saved_filename = os.path.basename(input_path)
 
     history_entry = {
         "image_id": image_id,
         "mode": result.get("mode", mode),
+        "optimize_for": result.get("optimize_for", optimize_for),
         "shapes_found": result["shapes_found"],
         "colors_used": result.get("colors_used"),
         "width": result["width"],
@@ -132,6 +156,7 @@ def vectorize(
         "message": "ছবি সফলভাবে ভেক্টরাইজ হয়েছে",
         "image_id": image_id,
         "mode": result.get("mode", mode),
+        "optimize_for": result.get("optimize_for", optimize_for),
         "width": result["width"],
         "height": result["height"],
         "shapes_found": result["shapes_found"],
