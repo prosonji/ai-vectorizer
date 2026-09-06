@@ -30,9 +30,28 @@ declare global {
 
 type FileStatus = "waiting" | "processing" | "done" | "error";
 
+type ExportFormat = "svg" | "pdf" | "eps" | "dxf";
+
+const FORMAT_OPTIONS: { value: ExportFormat; label: string }[] = [
+  { value: "svg", label: "SVG" },
+  { value: "pdf", label: "PDF" },
+  { value: "eps", label: "EPS" },
+  { value: "dxf", label: "DXF" },
+];
+
+type OptimizeFor = "general" | "editing" | "cutting" | "custom";
+
+const OPTIMIZE_OPTIONS: { value: OptimizeFor; label: string; hint: string }[] = [
+  { value: "general", label: "সাধারণ ব্যবহার", hint: "ডিফল্ট, সব কাজে চলবে" },
+  { value: "editing", label: "সহজ সম্পাদনা", hint: "কম পয়েন্ট, এডিট করা সহজ" },
+  { value: "cutting", label: "কাটিং/এনগ্রেভিং", hint: "পরিষ্কার লাইন, লেজার-কাটের জন্য" },
+  { value: "custom", label: "কাস্টম", hint: "নিজের মতো মোড বাছাই করো" },
+];
+
 type BatchItem = {
   file: File;
   status: FileStatus;
+  imageId: string | null;
   svgUrl: string | null;
   shapesFound: number | null;
   errorMessage: string | null;
@@ -42,6 +61,9 @@ export default function BatchPage() {
   const [items, setItems] = useState<BatchItem[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
+  const [format, setFormat] = useState<ExportFormat>("svg");
+  const [optimizeFor, setOptimizeFor] = useState<OptimizeFor>("general");
+  const [customMode, setCustomMode] = useState<"bw" | "color">("bw");
 
   // ---- পেজ লোড হওয়ার সময় CDN থেকে JSZip লোড করা ----
   useEffect(() => {
@@ -75,6 +97,7 @@ export default function BatchPage() {
       imageFiles.map((file) => ({
         file,
         status: "waiting",
+        imageId: null,
         svgUrl: null,
         shapesFound: null,
         errorMessage: null,
@@ -111,8 +134,9 @@ export default function BatchPage() {
         }
         const uploadData = await uploadRes.json();
 
+        const vectorizeMode = optimizeFor === "custom" ? customMode : "bw";
         const vectorizeRes = await fetch(
-          `${BACKEND_URL}/vectorize/${uploadData.image_id}?mode=bw`,
+          `${BACKEND_URL}/vectorize/${uploadData.image_id}?mode=${vectorizeMode}&optimize_for=${optimizeFor}`,
           { method: "POST" }
         );
         if (!vectorizeRes.ok) {
@@ -127,6 +151,7 @@ export default function BatchPage() {
               ? {
                   ...item,
                   status: "done",
+                  imageId: uploadData.image_id,
                   svgUrl: `${BACKEND_URL}${vectorizeData.download_url}`,
                   shapesFound: vectorizeData.shapes_found,
                 }
@@ -153,10 +178,22 @@ export default function BatchPage() {
   }
 
   /**
-   * সফলভাবে vectorize হওয়া সব SVG একসাথে একটা .zip ফাইলে বান্ডেল
-   * করে ডাউনলোড করা। প্রতিটা SVG এর কনটেন্ট আলাদা করে fetch করে
-   * JSZip এ যোগ করা হচ্ছে, তারপর একসাথে একটা zip বানিয়ে ডাউনলোড
-   * করানো হচ্ছে।
+   * নির্বাচিত format (svg/pdf/eps/dxf) অনুযায়ী একটা item এর
+   * ডাউনলোড URL বানানো। SVG এর জন্য আগে থেকে vectorize করার সময়
+   * পাওয়া svgUrl ব্যবহার হয়, বাকি ফরম্যাটের জন্য backend এর
+   * /export/{format}/{image_id} endpoint কল করা হয়।
+   */
+  function getDownloadUrl(item: BatchItem, fmt: ExportFormat): string | null {
+    if (fmt === "svg") return item.svgUrl;
+    if (!item.imageId) return null;
+    return `${BACKEND_URL}/export/${fmt}/${item.imageId}`;
+  }
+
+  /**
+   * সফলভাবে vectorize হওয়া সব ছবি নির্বাচিত format এ একসাথে একটা
+   * .zip ফাইলে বান্ডেল করে ডাউনলোড করা। SVG এর জন্য সরাসরি svgUrl
+   * থেকে, আর PDF/EPS/DXF এর জন্য backend এর /export endpoint থেকে
+   * প্রতিটা ফাইল আলাদা করে fetch করে JSZip এ যোগ করা হচ্ছে।
    */
   async function handleDownloadAllZip() {
     if (!window.JSZip) {
@@ -171,11 +208,21 @@ export default function BatchPage() {
       const doneItems = items.filter((i) => i.status === "done" && i.svgUrl);
 
       for (const item of doneItems) {
-        const response = await fetch(item.svgUrl as string);
-        const svgText = await response.text();
-        // আসল ফাইলের নাম রেখে, শুধু extension .svg করে দেওয়া হচ্ছে
+        const url = getDownloadUrl(item, format);
+        if (!url) continue;
+
         const baseName = item.file.name.replace(/\.[^/.]+$/, "");
-        zip.file(`${baseName}.svg`, svgText);
+
+        if (format === "svg") {
+          const response = await fetch(url);
+          const svgText = await response.text();
+          zip.file(`${baseName}.svg`, svgText);
+        } else {
+          const response = await fetch(url);
+          if (!response.ok) continue;
+          const blob = await response.blob();
+          zip.file(`${baseName}.${format}`, blob);
+        }
       }
 
       const zipBlob = await zip.generateAsync({ type: "blob" });
@@ -183,7 +230,7 @@ export default function BatchPage() {
 
       const link = document.createElement("a");
       link.href = zipUrl;
-      link.download = "vectorized-images.zip";
+      link.download = `vectorized-images-${format}.zip`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -235,6 +282,83 @@ export default function BatchPage() {
           </p>
         </label>
 
+        {/* ---- Optimize for (vectorizer.ai এর মতো প্রিসেট) ---- */}
+        <div className="mt-4">
+          <p className="text-xs text-gray-500 mb-2">Optimize for</p>
+          <div className="grid grid-cols-2 gap-2">
+            {OPTIMIZE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setOptimizeFor(opt.value)}
+                className={`text-left p-2 rounded-xl border text-xs transition-colors ${
+                  optimizeFor === opt.value
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                <div className="font-semibold">{opt.label}</div>
+                <div
+                  className={
+                    optimizeFor === opt.value ? "text-blue-100" : "text-gray-400"
+                  }
+                >
+                  {opt.hint}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* ---- custom হলে mode (bw/color) বাছাই ---- */}
+          {optimizeFor === "custom" && (
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCustomMode("bw")}
+                className={`flex-1 py-2 rounded-full text-xs font-semibold border transition-colors ${
+                  customMode === "bw"
+                    ? "bg-gray-900 text-white border-gray-900"
+                    : "bg-white text-gray-600 border-gray-300"
+                }`}
+              >
+                কালো-সাদা (BW)
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomMode("color")}
+                className={`flex-1 py-2 rounded-full text-xs font-semibold border transition-colors ${
+                  customMode === "color"
+                    ? "bg-gray-900 text-white border-gray-900"
+                    : "bg-white text-gray-600 border-gray-300"
+                }`}
+              >
+                রঙিন (Color)
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ---- ফরম্যাট বাছাই (SVG/PDF/EPS/DXF) ---- */}
+        <div className="mt-4">
+          <p className="text-xs text-gray-500 mb-2">ডাউনলোড ফরম্যাট</p>
+          <div className="grid grid-cols-4 gap-2">
+            {FORMAT_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setFormat(opt.value)}
+                className={`py-2 rounded-full text-sm font-semibold border transition-colors ${
+                  format === opt.value
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <button
           onClick={handleProcessAll}
           disabled={items.length === 0 || isRunning}
@@ -245,18 +369,21 @@ export default function BatchPage() {
             : `সব ভেক্টরাইজ করো (${items.length}টা ছবি)`}
         </button>
 
-        {/* ---- সব SVG একসাথে ZIP এ ডাউনলোড করার বাটন ---- */}
-        {doneCount > 0 && (
-          <button
-            onClick={handleDownloadAllZip}
-            disabled={isZipping}
-            className="w-full mt-3 bg-gray-900 text-white font-semibold py-3 rounded-full hover:bg-gray-800 disabled:bg-gray-300 transition-colors"
-          >
-            {isZipping
-              ? "ZIP বানানো হচ্ছে..."
-              : `সব SVG ডাউনলোড করো (ZIP) - ${doneCount}টা ফাইল`}
-          </button>
-        )}
+        {/* ---- সব SVG একসাথে ZIP এ ডাউনলোড করার বাটন ----
+            আগে এই বাটন শুধু doneCount > 0 হলে দেখানো হতো, এখন সবসময়
+            দেখানো হয় (শুরুতে disabled থাকে), যাতে ইউজার প্রথম থেকেই
+            বাটনটা দেখতে পায় এবং বুঝতে পারে এটা কী কাজ করবে। */}
+        <button
+          onClick={handleDownloadAllZip}
+          disabled={isZipping || doneCount === 0}
+          className="w-full mt-3 bg-gray-900 text-white font-semibold py-3 rounded-full hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+        >
+          {isZipping
+            ? "ZIP বানানো হচ্ছে..."
+            : doneCount > 0
+            ? `সব ${format.toUpperCase()} ডাউনলোড করো (ZIP) - ${doneCount}টা ফাইল`
+            : `সব ${format.toUpperCase()} ডাউনলোড করো (ZIP)`}
+        </button>
       </div>
 
       {/* ---- রেজাল্ট গ্রিড ---- */}
@@ -293,15 +420,21 @@ export default function BatchPage() {
                 )}
               </div>
 
-              {item.status === "done" && item.svgUrl && (
-                <a
-                  href={item.svgUrl}
-                  download
-                  className="block text-center text-xs text-blue-600 hover:underline mt-2"
-                >
-                  SVG ডাউনলোড ↓
-                </a>
-              )}
+              {item.status === "done" &&
+                item.svgUrl &&
+                (() => {
+                  const url = getDownloadUrl(item, format);
+                  if (!url) return null;
+                  return (
+                    <a
+                      href={url}
+                      download
+                      className="block text-center text-xs text-blue-600 hover:underline mt-2"
+                    >
+                      {format.toUpperCase()} ডাউনলোড ↓
+                    </a>
+                  );
+                })()}
             </div>
           ))}
         </div>
