@@ -12,12 +12,21 @@
  * /upload আর /vectorize endpoint বারবার কল করেই কাজ চালানো হচ্ছে।
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
 const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"];
+
+// JSZip লাইব্রেরিটা npm দিয়ে ইনস্টল না করে, সরাসরি CDN (ইন্টারনেট)
+// থেকে ব্রাউজারে লোড করা হবে - এতে package.json বদলানো বা আবার
+// `npm install` করা লাগবে না।
+declare global {
+  interface Window {
+    JSZip: any;
+  }
+}
 
 type FileStatus = "waiting" | "processing" | "done" | "error";
 
@@ -32,6 +41,18 @@ type BatchItem = {
 export default function BatchPage() {
   const [items, setItems] = useState<BatchItem[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [isZipping, setIsZipping] = useState(false);
+
+  // ---- পেজ লোড হওয়ার সময় CDN থেকে JSZip লোড করা ----
+  useEffect(() => {
+    if (window.JSZip) return; // আগে থেকে লোড থাকলে আবার লোড করার দরকার নাই
+
+    const script = document.createElement("script");
+    script.src =
+      "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    script.async = true;
+    document.body.appendChild(script);
+  }, []);
 
   /**
    * ফোল্ডার (বা একাধিক ফাইল) বাছাই হলে - শুধু বৈধ ইমেজ ফরম্যাট
@@ -131,6 +152,49 @@ export default function BatchPage() {
     setIsRunning(false);
   }
 
+  /**
+   * সফলভাবে vectorize হওয়া সব SVG একসাথে একটা .zip ফাইলে বান্ডেল
+   * করে ডাউনলোড করা। প্রতিটা SVG এর কনটেন্ট আলাদা করে fetch করে
+   * JSZip এ যোগ করা হচ্ছে, তারপর একসাথে একটা zip বানিয়ে ডাউনলোড
+   * করানো হচ্ছে।
+   */
+  async function handleDownloadAllZip() {
+    if (!window.JSZip) {
+      alert("এক্ষুনি প্রস্তুত হচ্ছে, একটু পর আবার চেষ্টা করো");
+      return;
+    }
+
+    setIsZipping(true);
+
+    try {
+      const zip = new window.JSZip();
+      const doneItems = items.filter((i) => i.status === "done" && i.svgUrl);
+
+      for (const item of doneItems) {
+        const response = await fetch(item.svgUrl as string);
+        const svgText = await response.text();
+        // আসল ফাইলের নাম রেখে, শুধু extension .svg করে দেওয়া হচ্ছে
+        const baseName = item.file.name.replace(/\.[^/.]+$/, "");
+        zip.file(`${baseName}.svg`, svgText);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const zipUrl = URL.createObjectURL(zipBlob);
+
+      const link = document.createElement("a");
+      link.href = zipUrl;
+      link.download = "vectorized-images.zip";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(zipUrl);
+    } catch {
+      alert("ZIP বানাতে সমস্যা হয়েছে, আবার চেষ্টা করো");
+    } finally {
+      setIsZipping(false);
+    }
+  }
+
   const doneCount = items.filter((i) => i.status === "done").length;
 
   return (
@@ -180,6 +244,19 @@ export default function BatchPage() {
             ? `প্রসেস হচ্ছে... (${doneCount}/${items.length})`
             : `সব ভেক্টরাইজ করো (${items.length}টা ছবি)`}
         </button>
+
+        {/* ---- সব SVG একসাথে ZIP এ ডাউনলোড করার বাটন ---- */}
+        {doneCount > 0 && (
+          <button
+            onClick={handleDownloadAllZip}
+            disabled={isZipping}
+            className="w-full mt-3 bg-gray-900 text-white font-semibold py-3 rounded-full hover:bg-gray-800 disabled:bg-gray-300 transition-colors"
+          >
+            {isZipping
+              ? "ZIP বানানো হচ্ছে..."
+              : `সব SVG ডাউনলোড করো (ZIP) - ${doneCount}টা ফাইল`}
+          </button>
+        )}
       </div>
 
       {/* ---- রেজাল্ট গ্রিড ---- */}
